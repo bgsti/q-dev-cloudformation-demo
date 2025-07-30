@@ -1,0 +1,781 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Multi-VPC infrastructure with Transit Gateway and SSM endpoints'
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+    Default: 'Demo'
+
+Resources:
+  # ==========================================
+  # VPC 1 - 10.0.0.0/22
+  # ==========================================
+  VPC1:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/22
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1
+
+  # Internet Gateway for VPC1
+  VPC1InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-IGW
+
+  VPC1InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref VPC1InternetGateway
+      VpcId: !Ref VPC1
+
+  # Public Subnets for VPC1
+  VPC1PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.0.0/26
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-Public-Subnet-AZ1
+
+  VPC1PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.0.0.64/26
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-Public-Subnet-AZ2
+
+  # Private Subnets for VPC1
+  VPC1PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.1.0/26
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-Private-Subnet-AZ1
+
+  VPC1PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.0.1.64/26
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-Private-Subnet-AZ2
+
+  # Transit Gateway Attachment Subnets for VPC1
+  VPC1TGWSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.2.0/26
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-TGW-Subnet-AZ1
+
+  VPC1TGWSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.0.2.64/26
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-TGW-Subnet-AZ2
+
+  # NAT Gateways for VPC1
+  VPC1NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: VPC1InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  VPC1NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: VPC1InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  VPC1NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt VPC1NatGateway1EIP.AllocationId
+      SubnetId: !Ref VPC1PublicSubnet1
+
+  VPC1NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt VPC1NatGateway2EIP.AllocationId
+      SubnetId: !Ref VPC1PublicSubnet2
+
+  # Route Tables for VPC1
+  VPC1PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-Public-Routes
+
+  VPC1DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPC1InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref VPC1PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref VPC1InternetGateway
+
+  VPC1PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC1PublicRouteTable
+      SubnetId: !Ref VPC1PublicSubnet1
+
+  VPC1PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC1PublicRouteTable
+      SubnetId: !Ref VPC1PublicSubnet2
+
+  VPC1PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-Private-Routes-AZ1
+
+  VPC1DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC1PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref VPC1NatGateway1
+
+  VPC1PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC1PrivateRouteTable1
+      SubnetId: !Ref VPC1PrivateSubnet1
+
+  VPC1PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-Private-Routes-AZ2
+
+  VPC1DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC1PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref VPC1NatGateway2
+
+  VPC1PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC1PrivateRouteTable2
+      SubnetId: !Ref VPC1PrivateSubnet2
+
+  # ==========================================
+  # VPC 2 - 10.0.4.0/22
+  # ==========================================
+  VPC2:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.4.0/22
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2
+
+  # Internet Gateway for VPC2
+  VPC2InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-IGW
+
+  VPC2InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref VPC2InternetGateway
+      VpcId: !Ref VPC2
+
+  # Public Subnets for VPC2
+  VPC2PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.4.0/26
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-Public-Subnet-AZ1
+
+  VPC2PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.0.4.64/26
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-Public-Subnet-AZ2
+
+  # Private Subnets for VPC2
+  VPC2PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.5.0/26
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-Private-Subnet-AZ1
+
+  VPC2PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.0.5.64/26
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-Private-Subnet-AZ2
+
+  # Transit Gateway Attachment Subnets for VPC2
+  VPC2TGWSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.6.0/26
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-TGW-Subnet-AZ1
+
+  VPC2TGWSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.0.6.64/26
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-TGW-Subnet-AZ2
+
+  # NAT Gateways for VPC2
+  VPC2NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: VPC2InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  VPC2NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: VPC2InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  VPC2NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt VPC2NatGateway1EIP.AllocationId
+      SubnetId: !Ref VPC2PublicSubnet1
+
+  VPC2NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt VPC2NatGateway2EIP.AllocationId
+      SubnetId: !Ref VPC2PublicSubnet2
+
+  # Route Tables for VPC2
+  VPC2PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC2
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-Public-Routes
+
+  VPC2DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPC2InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref VPC2PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref VPC2InternetGateway
+
+  VPC2PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC2PublicRouteTable
+      SubnetId: !Ref VPC2PublicSubnet1
+
+  VPC2PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC2PublicRouteTable
+      SubnetId: !Ref VPC2PublicSubnet2
+
+  VPC2PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC2
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-Private-Routes-AZ1
+
+  VPC2DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC2PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref VPC2NatGateway1
+
+  VPC2PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC2PrivateRouteTable1
+      SubnetId: !Ref VPC2PrivateSubnet1
+
+  VPC2PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC2
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-Private-Routes-AZ2
+
+  VPC2DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC2PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref VPC2NatGateway2
+
+  VPC2PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC2PrivateRouteTable2
+      SubnetId: !Ref VPC2PrivateSubnet2
+
+  # ==========================================
+  # Transit Gateway
+  # ==========================================
+  TransitGateway:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      AmazonSideAsn: 65000
+      Description: Transit Gateway for VPC communication
+      DefaultRouteTableAssociation: enable
+      DefaultRouteTablePropagation: enable
+      DnsSupport: enable
+      VpnEcmpSupport: enable
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-TGW
+
+  # Transit Gateway Attachments
+  TGWAttachmentVPC1:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref TransitGateway
+      VpcId: !Ref VPC1
+      SubnetIds:
+        - !Ref VPC1TGWSubnet1
+        - !Ref VPC1TGWSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-TGW-Attachment-VPC1
+
+  TGWAttachmentVPC2:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref TransitGateway
+      VpcId: !Ref VPC2
+      SubnetIds:
+        - !Ref VPC2TGWSubnet1
+        - !Ref VPC2TGWSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-TGW-Attachment-VPC2
+
+  # Routes for inter-VPC communication via Transit Gateway
+  VPC1ToVPC2Route1:
+    Type: AWS::EC2::Route
+    DependsOn: TGWAttachmentVPC1
+    Properties:
+      RouteTableId: !Ref VPC1PrivateRouteTable1
+      DestinationCidrBlock: 10.0.4.0/22
+      TransitGatewayId: !Ref TransitGateway
+
+  VPC1ToVPC2Route2:
+    Type: AWS::EC2::Route
+    DependsOn: TGWAttachmentVPC1
+    Properties:
+      RouteTableId: !Ref VPC1PrivateRouteTable2
+      DestinationCidrBlock: 10.0.4.0/22
+      TransitGatewayId: !Ref TransitGateway
+
+  VPC2ToVPC1Route1:
+    Type: AWS::EC2::Route
+    DependsOn: TGWAttachmentVPC2
+    Properties:
+      RouteTableId: !Ref VPC2PrivateRouteTable1
+      DestinationCidrBlock: 10.0.0.0/22
+      TransitGatewayId: !Ref TransitGateway
+
+  VPC2ToVPC1Route2:
+    Type: AWS::EC2::Route
+    DependsOn: TGWAttachmentVPC2
+    Properties:
+      RouteTableId: !Ref VPC2PrivateRouteTable2
+      DestinationCidrBlock: 10.0.0.0/22
+      TransitGatewayId: !Ref TransitGateway
+
+  # ==========================================
+  # Security Groups for VPC Endpoints
+  # ==========================================
+  VPC1EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for VPC endpoints in VPC1
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.0.0/22
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-Endpoint-SG
+
+  VPC2EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for VPC endpoints in VPC2
+      VpcId: !Ref VPC2
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.4.0/22
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-Endpoint-SG
+
+  # ==========================================
+  # VPC Endpoints for SSM - VPC1
+  # ==========================================
+  VPC1SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC1
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref VPC1PrivateSubnet1
+        - !Ref VPC1PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPC1EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - ssm:*
+            Resource: '*'
+
+  VPC1SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC1
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref VPC1PrivateSubnet1
+        - !Ref VPC1PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPC1EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - ssmmessages:*
+            Resource: '*'
+
+  VPC1EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC1
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref VPC1PrivateSubnet1
+        - !Ref VPC1PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPC1EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - ec2messages:*
+            Resource: '*'
+
+  # ==========================================
+  # VPC Endpoints for SSM - VPC2
+  # ==========================================
+  VPC2SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC2
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref VPC2PrivateSubnet1
+        - !Ref VPC2PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPC2EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - ssm:*
+            Resource: '*'
+
+  VPC2SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC2
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref VPC2PrivateSubnet1
+        - !Ref VPC2PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPC2EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - ssmmessages:*
+            Resource: '*'
+
+  VPC2EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC2
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref VPC2PrivateSubnet1
+        - !Ref VPC2PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref VPC2EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - ec2messages:*
+            Resource: '*'
+
+  # ==========================================
+  # IAM Role for EC2 Instances (SSM Access)
+  # ==========================================
+  EC2SSMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-EC2-SSM-Role
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2SSMRole
+
+  # ==========================================
+  # Security Groups for EC2 Instances
+  # ==========================================
+  VPC1EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EC2 instance in VPC1
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.0.4.0/22
+          Description: Allow ping from VPC2
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.0.0/22
+          Description: HTTPS for SSM
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-EC2-SG
+
+  VPC2EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EC2 instance in VPC2
+      VpcId: !Ref VPC2
+      SecurityGroupIngress:
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.0.0.0/22
+          Description: Allow ping from VPC1
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.4.0/22
+          Description: HTTPS for SSM
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-EC2-SG
+
+  # ==========================================
+  # EC2 Instances
+  # ==========================================
+  VPC1EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+      InstanceType: t3.micro
+      SubnetId: !Ref VPC1PrivateSubnet1
+      SecurityGroupIds:
+        - !Ref VPC1EC2SecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y amazon-ssm-agent
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC1-EC2-Instance
+
+  VPC2EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+      InstanceType: t3.micro
+      SubnetId: !Ref VPC2PrivateSubnet1
+      SecurityGroupIds:
+        - !Ref VPC2EC2SecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y amazon-ssm-agent
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC2-EC2-Instance
+
+# ==========================================
+# Outputs
+# ==========================================
+Outputs:
+  VPC1Id:
+    Description: ID of VPC1
+    Value: !Ref VPC1
+    Export:
+      Name: !Sub ${EnvironmentName}-VPC1-ID
+
+  VPC2Id:
+    Description: ID of VPC2
+    Value: !Ref VPC2
+    Export:
+      Name: !Sub ${EnvironmentName}-VPC2-ID
+
+  TransitGatewayId:
+    Description: ID of the Transit Gateway
+    Value: !Ref TransitGateway
+    Export:
+      Name: !Sub ${EnvironmentName}-TGW-ID
+
+  VPC1EC2InstanceId:
+    Description: Instance ID of EC2 in VPC1
+    Value: !Ref VPC1EC2Instance
+    Export:
+      Name: !Sub ${EnvironmentName}-VPC1-EC2-ID
+
+  VPC2EC2InstanceId:
+    Description: Instance ID of EC2 in VPC2
+    Value: !Ref VPC2EC2Instance
+    Export:
+      Name: !Sub ${EnvironmentName}-VPC2-EC2-ID
+
+  VPC1EC2PrivateIP:
+    Description: Private IP of EC2 instance in VPC1
+    Value: !GetAtt VPC1EC2Instance.PrivateIp
+    Export:
+      Name: !Sub ${EnvironmentName}-VPC1-EC2-PrivateIP
+
+  VPC2EC2PrivateIP:
+    Description: Private IP of EC2 instance in VPC2
+    Value: !GetAtt VPC2EC2Instance.PrivateIp
+    Export:
+      Name: !Sub ${EnvironmentName}-VPC2-EC2-PrivateIP
